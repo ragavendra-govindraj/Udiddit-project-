@@ -1,0 +1,238 @@
+--We now create tables for our new schema, starting with the users list--
+CREATE TABLE "users_list" (
+	"user_id" SERIAL PRIMARY KEY
+	,"user_name" VARCHAR(25) UNIQUE NOT NULL
+	,
+	--The username should not be empty or have blanks--
+	CONSTRAINT "user_name_check_non-empty" CHECK (LENGTH(TRIM("user_name")) > 0)
+	,
+	-- Login date and time to be captured--
+	"login_datetime" TIMESTAMP
+	);
+
+--Topics table--
+CREATE TABLE "topics_list" (
+	"topic_id" SERIAL PRIMARY KEY
+	,"topic_name" VARCHAR(30) UNIQUE NOT NULL
+	,CONSTRAINT "topic_name_check_non-empty" CHECK (LENGTH(TRIM("topic_name")) > 0)
+	,"topic_description" VARCHAR(500)
+	);
+
+--Posts Table--
+CREATE TABLE "posts_list" (
+	"post_id" SERIAL PRIMARY KEY
+	,"post_title" VARCHAR(100) NOT NULL
+	,"post_datetime" TIMESTAMP
+	,"post_by_user_id" INTEGER
+	,"post_url" TEXT
+	,"post_content" TEXT
+	,CONSTRAINT "check_either_post-text_or_url_exist" CHECK (
+		(
+			("post_url") IS NULL
+			AND ("post_content") IS NOT NULL
+			)
+		OR (
+			("post_url") IS NOT NULL
+			AND ("post_content") IS NULL
+			)
+		)
+	,"topic_id" INTEGER NOT NULL
+	,CONSTRAINT "foreign_key_topic_id" FOREIGN KEY ("topic_id") REFERENCES "topics_list" ("topic_id") ON DELETE CASCADE
+	,CONSTRAINT "foreign_key_post_by_user_id" FOREIGN KEY ("post_by_user_id") REFERENCES "users_list" ("user_id") ON DELETE SET NULL
+	);
+
+--Comments table--
+CREATE TABLE "comments_list" (
+	"comment_id" SERIAL PRIMARY KEY
+	,"comment_text" TEXT NOT NULL
+	,CONSTRAINT "comment_not_empty" CHECK (LENGTH(TRIM("comment_text")) > 0)
+	,"commenting_user_id" INTEGER
+	,CONSTRAINT "foreign_key_commenting_user_id" FOREIGN KEY ("commenting_user_id") REFERENCES "users_list" ("user_id") ON DELETE SET NULL
+	,"comment_for_topic_id" INTEGER NOT NULL
+	,CONSTRAINT "foreign_key_comment_for_topic_id" FOREIGN KEY ("comment_for_topic_id") REFERENCES "topics_list" ("topic_id") ON DELETE CASCADE
+	,"comment_for_post_id" INTEGER NOT NULL
+	,CONSTRAINT "foreign_key_comment_for_post_id" FOREIGN KEY ("comment_for_post_id") REFERENCES "posts_list" ("post_id") ON DELETE CASCADE
+	,"parent_comment_id" INTEGER DEFAULT NULL
+	,CONSTRAINT "foreign_key_parent_comment_id" FOREIGN KEY ("parent_comment_id") REFERENCES "comments_list" ("comment_id") ON DELETE SET NULL
+	);
+
+--Votes table--
+CREATE TABLE "votes_list" (
+	"upvote_downvote" INTEGER CHECK (
+		"upvote_downvote" = 1
+		OR "upvote_downvote" = - 1
+		)
+	,"voter_user_id" INTEGER NOT NULL
+	,CONSTRAINT "foreign_key_voter_user_id" FOREIGN KEY ("voter_user_id") REFERENCES "users_list" ("user_id") ON DELETE CASCADE
+	,"voted_post_id" INTEGER NOT NULL
+	,CONSTRAINT "foreign_key_voted_post_id" FOREIGN KEY ("voted_post_id") REFERENCES "posts_list" ("post_id") -- 
+	ON DELETE CASCADE
+	,CONSTRAINT "user_votes_only_once" PRIMARY KEY (
+		"voted_post_id"
+		,"voter_user_id"
+		)
+	);
+
+--setting up DDL for answering Guideline 2
+-- a. List all users who haven’t logged in in the last year.--
+CREATE INDEX "haven't_loggedin_last_year" ON "users_list" (
+	"user_name"
+	,"login_datetime"
+	);
+
+--b. List all users who haven’t created any post.--
+CREATE INDEX "haven't_created_any_post" ON "posts_list" (
+	"post_by_user_id"
+	,"post_id"
+	);
+
+--c. Find a user by their username.--
+--We don't need an index for this one as user_name from the table users_list has a unique constraint on it--
+--d. List all topics that don’t have any posts.--
+CREATE INDEX "topic_that_dont_have_any_posts" ON "posts_list" (
+	"topic_id"
+	,"post_id"
+	);
+
+--e. Find a topic by its name.--
+--We Don't need to create an  index for topic  by name as topic_name in the table topic_list is a unique column--    
+--f. List the latest 20 posts for a given topic.--
+CREATE INDEX "timestamp_based_posts_for_given_topic" ON "posts_list" (
+	"post_datetime"
+	,"post_title"
+	,"post_content"
+	,"post_id"
+	);
+
+--g. List the latest 20 posts made by a given user.--
+CREATE INDEX "timestamp_based_posts_for_given_user" ON "posts_list" (
+	"post_datetime"
+	,"post_url"
+	,"post_content"
+	,"post_by_user_id"
+	);
+
+--h. Find all posts that link to a specific URL, for moderation purposes.--
+CREATE INDEX "posts_by_URL" ON "posts_list" ("post_url");
+
+--i. List all the top-level comments (those that don’t have a parent comment) for a given post--
+CREATE INDEX "find_all_top_level_comments_for_post" ON "comments_list" (
+	"comment_text"
+	,"comment_for_post_id"
+	,"parent_comment_id"
+	)
+WHERE "parent_comment_id" = NULL;
+
+--j. List all the direct children of a parent comment.--
+CREATE INDEX "all_children_of_parent_comment" ON "comments_list" (
+	"comment_text"
+	,"parent_comment_id"
+	);
+
+--k. List the latest 20 comments made by a given user.--
+CREATE INDEX "Latest_comments_by_user" ON "comments_list" (
+	"comment_text"
+	,"commenting_user_id"
+	);
+
+--l. Compute the score of a post, defined as the difference between the number of upvotes and the number of downvotes--
+CREATE INDEX "Score_of_post" ON "votes_list" (
+	"voted_post_id"
+	,"upvote_downvote"
+	);
+
+
+
+
+--BEGINNING DATA MIGRATION --
+--Inserting users from initial tables--
+INSERT INTO "users_list" ("user_name")
+SELECT DISTINCT username
+FROM bad_posts
+
+UNION
+
+SELECT DISTINCT username
+FROM bad_comments
+
+UNION
+
+SELECT DISTINCT regexp_split_to_table(upvotes, ',')
+FROM bad_posts
+
+UNION
+
+SELECT DISTINCT regexp_split_to_table(downvotes, ',')
+FROM bad_posts;
+
+--Inserting topics from bad_posts--
+INSERT INTO "topics_list" ("topic_name")
+SELECT DISTINCT topic
+FROM "bad_posts";
+
+--populating the posts_lists table--
+INSERT INTO "posts_list" (
+	"post_title"
+	,"post_url"
+	,"post_content"
+	,"post_by_user_id"
+	,"topic_id"
+	)
+SELECT badposts.title
+	,badposts.url
+	,badposts.text_content
+	,userslist.user_id AS post_by_user_id
+	,topicslist.topic_id AS topic_id
+FROM "bad_posts" badposts
+JOIN "users_list" userslist ON badposts.username = userslist.user_name
+JOIN "topics_list" topicslist ON badposts.topic = topicslist.topic_name
+WHERE LENGTH(TRIM(badposts.title)) <= 30;
+
+--Inseting comments and ids in comments--
+INSERT INTO "comments_list" (
+	"comment_text"
+	,"commenting_user_id"
+	,"comment_for_topic_id"
+	,"comment_for_post_id"
+	)
+SELECT badcomments.text_content AS comment_text
+	,postslist."post_by_user_id"
+	,postslist.topic_id
+	,postslist.post_id AS comment_for_post_id
+FROM "bad_posts" badposts
+JOIN "posts_list" postslist ON badposts.title = postslist.post_title
+JOIN "users_list" userslist ON postslist."post_by_user_id" = userslist.user_id
+JOIN "bad_comments" badcomments ON userslist.user_name = badcomments.username;
+
+--Insert Upvotes and downvotes--
+INSERT INTO "votes_list" (
+	"upvote_downvote"
+	,"voter_user_id"
+	,"voted_post_id"
+	)
+WITH "badposts_upvotes" AS (
+		SELECT title
+			,Regexp_split_to_table(badposts.upvotes, ',') AS user_upvotes
+		FROM "bad_posts" badposts
+		)
+	,"badposts_downvotes" AS (
+		SELECT title
+			,Regexp_split_to_table(badposts.downvotes, ',') AS user_downvotes
+		FROM "bad_posts" badposts
+		)
+SELECT 1 AS upvote_downvote
+	,userslist.user_id AS voter_user_id
+	,postslist.post_id AS voted_post_id
+FROM "badposts_upvotes" badupvotes
+JOIN "posts_list" postslist ON badupvotes.title = postslist.post_title
+JOIN "users_list" userslist ON badupvotes.user_upvotes = userslist.user_name
+
+UNION ALL
+
+SELECT - 1 AS upvote_downvote
+	,userslist.user_id AS voter_user_id
+	,postslist.post_id AS voter_post_id
+FROM "badposts_downvotes" baddownvotes
+JOIN "posts_list" postslist ON baddownvotes.title = postslist.post_title
+JOIN "users_list" userslist ON baddownvotes.user_downvotes = userslist.user_name;
+
